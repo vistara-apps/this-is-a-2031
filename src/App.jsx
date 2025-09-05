@@ -7,6 +7,7 @@ import { Recording } from './components/Recording'
 import { Contacts } from './components/Contacts'
 import { Settings } from './components/Settings'
 import { StateSelector } from './components/StateSelector'
+import { SubscriptionManager } from './components/SubscriptionManager'
 
 function App() {
   const [currentView, setCurrentView] = useState('dashboard')
@@ -18,6 +19,7 @@ function App() {
     createdAt: new Date().toISOString()
   })
   const [isFirstTime, setIsFirstTime] = useState(true)
+  const [showSubscriptionManager, setShowSubscriptionManager] = useState(false)
 
   useEffect(() => {
     // Check if user has selected a state before
@@ -60,12 +62,21 @@ function App() {
 
   return (
     <AppShell currentView={currentView} onViewChange={setCurrentView}>
-      {currentView === 'dashboard' && <Dashboard user={user} onViewChange={setCurrentView} />}
+      {currentView === 'dashboard' && <Dashboard user={user} onViewChange={setCurrentView} onUpgrade={() => setShowSubscriptionManager(true)} />}
       {currentView === 'rights' && <RightsGuide state={user.currentState} />}
-      {currentView === 'scripts' && <Scripts state={user.currentState} />}
+      {currentView === 'scripts' && <Scripts state={user.currentState} user={user} />}
       {currentView === 'recording' && <Recording user={user} updateUser={updateUser} />}
       {currentView === 'contacts' && <Contacts user={user} updateUser={updateUser} />}
       {currentView === 'settings' && <Settings user={user} updateUser={updateUser} onStateChange={handleStateSelect} />}
+      
+      {/* Subscription Manager Modal */}
+      {showSubscriptionManager && (
+        <SubscriptionManager 
+          user={user} 
+          updateUser={updateUser} 
+          onClose={() => setShowSubscriptionManager(false)} 
+        />
+      )}
     </AppShell>
   )
 }

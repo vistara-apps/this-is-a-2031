@@ -1,9 +1,49 @@
-import React, { useState } from 'react'
-import { MessageSquare, Copy, Volume2 } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { MessageSquare, Copy, Volume2, Sparkles, Loader, RefreshCw } from 'lucide-react'
 import { RightsCard } from './RightsCard'
+import { DataService } from '../services/dataService.js'
 
-export function Scripts({ state }) {
+export function Scripts({ state, user }) {
   const [activeLanguage, setActiveLanguage] = useState('english')
+  const [aiScripts, setAiScripts] = useState({})
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [selectedScenario, setSelectedScenario] = useState('traffic_stop')
+
+  const generateAIScripts = async (scenario) => {
+    if (!user || !DataService.checkFeatureAccess(user, 'ai_scripts')) {
+      alert('AI-generated scripts are a premium feature. Please upgrade your plan.')
+      return
+    }
+
+    setIsGenerating(true)
+    try {
+      const result = await DataService.generateScripts(state, scenario, activeLanguage)
+      
+      if (result.success) {
+        setAiScripts(prev => ({
+          ...prev,
+          [scenario]: {
+            [activeLanguage]: result.data,
+            ...(result.data.spanish && { spanish: result.data.spanish })
+          }
+        }))
+        
+        // Track usage
+        await DataService.trackUsage(user.userId, 'ai_script_generated', {
+          state,
+          scenario,
+          language: activeLanguage
+        })
+      } else {
+        throw new Error(result.error)
+      }
+    } catch (error) {
+      console.error('Error generating AI scripts:', error)
+      alert('Failed to generate AI scripts. Please try again.')
+    } finally {
+      setIsGenerating(false)
+    }
+  }
 
   const scripts = {
     english: {
@@ -116,7 +156,123 @@ export function Scripts({ state }) {
         </button>
       </div>
 
-      {/* Scripts */}
+      {/* AI-Generated Scripts */}
+      {user && DataService.checkFeatureAccess(user, 'ai_scripts') && (
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+              <Sparkles className="text-yellow-400" size={20} />
+              AI-Generated Scripts for {state}
+            </h3>
+            <div className="flex gap-2">
+              <select
+                value={selectedScenario}
+                onChange={(e) => setSelectedScenario(e.target.value)}
+                className="bg-dark-surface border border-dark-border rounded-lg px-3 py-2 text-white text-sm"
+              >
+                <option value="traffic_stop">Traffic Stop</option>
+                <option value="pedestrian_stop">Pedestrian Stop</option>
+                <option value="home_visit">Home Visit</option>
+                <option value="arrest_situation">Arrest Situation</option>
+              </select>
+              <button
+                onClick={() => generateAIScripts(selectedScenario)}
+                disabled={isGenerating}
+                className="flex items-center gap-2 px-4 py-2 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm font-medium hover:bg-yellow-500/30 disabled:opacity-50"
+              >
+                {isGenerating ? (
+                  <>
+                    <Loader size={16} className="animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={16} />
+                    Generate AI Scripts
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {aiScripts[selectedScenario] && aiScripts[selectedScenario][activeLanguage] && (
+            <RightsCard variant="script">
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="text-yellow-400" size={16} />
+                  <span className="text-yellow-400 text-sm font-medium">AI-Generated for {selectedScenario.replace('_', ' ')}</span>
+                </div>
+                
+                {aiScripts[selectedScenario][activeLanguage].whatToSay && (
+                  <div className="space-y-2">
+                    <h4 className="font-medium text-green-400">✓ What to Say:</h4>
+                    {aiScripts[selectedScenario][activeLanguage].whatToSay.map((phrase, index) => (
+                      <div key={index} className="bg-green-500/10 p-3 rounded-lg border border-green-500/20">
+                        <div className="flex items-start gap-3">
+                          <div className="flex-1">
+                            <p className="text-white text-sm leading-relaxed">{phrase}</p>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => copyToClipboard(phrase)}
+                              className="p-2 text-dark-muted hover:text-white hover:bg-dark-border rounded-md transition-colors"
+                              title="Copy"
+                            >
+                              <Copy size={16} />
+                            </button>
+                            <button
+                              onClick={() => speakText(phrase)}
+                              className="p-2 text-dark-muted hover:text-white hover:bg-dark-border rounded-md transition-colors"
+                              title="Listen"
+                            >
+                              <Volume2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {aiScripts[selectedScenario][activeLanguage].whatNotToSay && (
+                  <div className="space-y-2">
+                    <h4 className="font-medium text-red-400">✗ What NOT to Say:</h4>
+                    {aiScripts[selectedScenario][activeLanguage].whatNotToSay.map((phrase, index) => (
+                      <div key={index} className="bg-red-500/10 p-3 rounded-lg border border-red-500/20">
+                        <p className="text-red-300 text-sm leading-relaxed">{phrase}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {aiScripts[selectedScenario][activeLanguage].bodyLanguage && (
+                  <div className="space-y-2">
+                    <h4 className="font-medium text-blue-400">👤 Body Language Tips:</h4>
+                    {aiScripts[selectedScenario][activeLanguage].bodyLanguage.map((tip, index) => (
+                      <div key={index} className="bg-blue-500/10 p-3 rounded-lg border border-blue-500/20">
+                        <p className="text-blue-300 text-sm leading-relaxed">{tip}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {aiScripts[selectedScenario][activeLanguage].stateSpecific && (
+                  <div className="space-y-2">
+                    <h4 className="font-medium text-purple-400">📍 {state}-Specific Notes:</h4>
+                    {aiScripts[selectedScenario][activeLanguage].stateSpecific.map((note, index) => (
+                      <div key={index} className="bg-purple-500/10 p-3 rounded-lg border border-purple-500/20">
+                        <p className="text-purple-300 text-sm leading-relaxed">{note}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </RightsCard>
+          )}
+        </div>
+      )}
+
+      {/* Standard Scripts */}
       <div className="space-y-6">
         {Object.entries(scripts[activeLanguage]).map(([key, scenario]) => (
           <RightsCard key={key} variant="script">
