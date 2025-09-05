@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Video, Square, Users, MapPin, Clock, AlertTriangle } from 'lucide-react'
+import { Video, Square, Users, MapPin, Clock, AlertTriangle, Upload, Share } from 'lucide-react'
 import { RightsCard } from './RightsCard'
 import { RecordButton } from './RecordButton'
+import { DataService } from '../services/dataService.js'
+import { PinataService } from '../services/pinata.js'
 
 export function Recording({ user, updateUser }) {
   const [isRecording, setIsRecording] = useState(false)
@@ -9,6 +11,8 @@ export function Recording({ user, updateUser }) {
   const [currentLocation, setCurrentLocation] = useState(null)
   const [mediaRecorder, setMediaRecorder] = useState(null)
   const [recordings, setRecordings] = useState([])
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState({})
   const intervalRef = useRef(null)
 
   useEffect(() => {
@@ -57,7 +61,7 @@ export function Recording({ user, updateUser }) {
         }
       }
 
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
         const blob = new Blob(chunks, { type: 'video/webm' })
         const url = URL.createObjectURL(blob)
         
@@ -66,6 +70,7 @@ export function Recording({ user, updateUser }) {
           userId: user.userId,
           timestamp: new Date().toISOString(),
           filePath: url,
+          blob: blob,
           location: currentLocation,
           sharedWith: [],
           duration: recordingTime,
@@ -73,6 +78,25 @@ export function Recording({ user, updateUser }) {
         }
         
         setRecordings(prev => [newRecording, ...prev])
+        
+        // Save recording with enhanced features
+        try {
+          const hasIPFSAccess = DataService.checkFeatureAccess(user, 'ipfs_storage')
+          const result = await DataService.saveRecording(newRecording, hasIPFSAccess)
+          
+          if (result.success) {
+            console.log('Recording saved successfully:', result.data)
+            
+            // Track usage
+            await DataService.trackUsage(user.userId, 'recording_created', {
+              duration: recordingTime,
+              hasLocation: !!currentLocation,
+              ipfsEnabled: hasIPFSAccess
+            })
+          }
+        } catch (error) {
+          console.error('Error saving recording:', error)
+        }
         
         // Stop all tracks
         stream.getTracks().forEach(track => track.stop())
@@ -97,23 +121,134 @@ export function Recording({ user, updateUser }) {
     }
   }
 
-  const alertContacts = () => {
+  const alertContacts = async () => {
     if (user.selectedContacts.length === 0) {
       alert('No emergency contacts set up. Please add contacts in Settings.')
       return
     }
 
-    // Simulate sending alerts to contacts
-    const alertMessage = `ALERT: ${user.userId} has activated RightGuard emergency recording at ${currentLocation ? `${currentLocation.latitude}, ${currentLocation.longitude}` : 'unknown location'} at ${new Date().toLocaleString()}`
-    
-    console.log('Sending alert to contacts:', alertMessage)
-    alert(`Alert sent to ${user.selectedContacts.length} contact(s)`)
+    try {
+      const result = await DataService.sendContactAlerts(
+        user, 
+        currentLocation, 
+        isRecording ? 'active_recording' : null
+      )
+      
+      if (result.success) {
+        alert(`Alert sent to ${result.data.alertsSent} contact(s)`)
+        
+        // Track usage
+        await DataService.trackUsage(user.userId, 'contact_alert_sent', {
+          contactCount: result.data.alertsSent,
+          hasLocation: !!currentLocation
+        })
+      } else {
+        alert(`Error sending alerts: ${result.error}`)
+      }
+    } catch (error) {
+      console.error('Error sending contact alerts:', error)
+      alert('Failed to send alerts. Please try again.')
+    }
   }
 
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60)
     const secs = seconds % 60
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+  }
+
+  const uploadToIPFS = async (recording) => {
+    if (!DataService.checkFeatureAccess(user, 'ipfs_storage')) {
+      alert('IPFS storage is a premium feature. Please upgrade your plan.')
+      return
+    }
+
+    setIsUploading(true)
+    setUploadProgress(prev => ({ ...prev, [recording.recordingId]: 0 }))
+
+    try {
+      // Simulate upload progress
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => ({
+          ...prev,
+          [recording.recordingId]: Math.min((prev[recording.recordingId] || 0) + 10, 90)
+        }))
+      }, 200)
+
+      const result = await PinataService.uploadFile(recording.blob, {
+        name: `recording_${recording.recordingId}`,
+        userId: user.userId,
+        timestamp: recording.timestamp
+      })
+
+      clearInterval(progressInterval)
+
+      if (result.success) {
+        setUploadProgress(prev => ({ ...prev, [recording.recordingId]: 100 }))
+        
+        // Update recording with IPFS data
+        const updatedRecordings = recordings.map(r => 
+          r.recordingId === recording.recordingId 
+            ? { ...r, ipfsHash: result.data.ipfsHash, ipfsUrl: result.data.url }
+            : r
+        )
+        setRecordings(updatedRecordings)
+
+        alert('Recording uploaded to IPFS successfully!')
+        
+        // Track usage
+        await DataService.trackUsage(user.userId, 'ipfs_upload', {
+          recordingId: recording.recordingId,
+          fileSize: recording.blob.size
+        })
+      } else {
+        throw new Error(result.error)
+      }
+    } catch (error) {
+      console.error('Error uploading to IPFS:', error)
+      alert('Failed to upload to IPFS. Please try again.')
+    } finally {
+      setIsUploading(false)
+      setTimeout(() => {
+        setUploadProgress(prev => {
+          const newProgress = { ...prev }
+          delete newProgress[recording.recordingId]
+          return newProgress
+        })
+      }, 2000)
+    }
+  }
+
+  const generateSummary = async (recording) => {
+    if (!DataService.checkFeatureAccess(user, 'ai_scripts')) {
+      alert('AI-generated summaries are a premium feature. Please upgrade your plan.')
+      return
+    }
+
+    try {
+      const result = await DataService.generateRecordingSummary(recording)
+      
+      if (result.success) {
+        // Show summary in a modal or alert
+        const summaryText = result.data.summary
+        const shareableUrl = result.data.shareableUrl
+        
+        const message = `Recording Summary:\n\n${summaryText}\n\n${shareableUrl ? `Shareable link: ${shareableUrl}` : ''}`
+        
+        // In a real app, you'd show this in a proper modal
+        alert(message)
+        
+        // Track usage
+        await DataService.trackUsage(user.userId, 'summary_generated', {
+          recordingId: recording.recordingId
+        })
+      } else {
+        throw new Error(result.error)
+      }
+    } catch (error) {
+      console.error('Error generating summary:', error)
+      alert('Failed to generate summary. Please try again.')
+    }
   }
 
   return (
@@ -202,30 +337,82 @@ export function Recording({ user, updateUser }) {
           <div className="space-y-4">
             {recordings.map((recording) => (
               <RightsCard key={recording.recordingId} variant="default">
-                <div className="flex items-center gap-4">
-                  <div className="w-16 h-16 bg-dark-bg rounded-lg flex items-center justify-center">
-                    <Video className="text-primary" size={24} />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Clock size={16} className="text-dark-muted" />
-                      <span className="text-white font-medium">
-                        {formatTime(recording.duration)}
-                      </span>
+                <div className="space-y-4">
+                  <div className="flex items-center gap-4">
+                    <div className="w-16 h-16 bg-dark-bg rounded-lg flex items-center justify-center">
+                      <Video className="text-primary" size={24} />
                     </div>
-                    <p className="text-sm text-dark-muted">
-                      {new Date(recording.timestamp).toLocaleString()}
-                    </p>
-                    {recording.location && (
-                      <div className="flex items-center gap-1 mt-1">
-                        <MapPin size={12} className="text-dark-muted" />
-                        <span className="text-xs text-dark-muted">Location saved</span>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Clock size={16} className="text-dark-muted" />
+                        <span className="text-white font-medium">
+                          {formatTime(recording.duration)}
+                        </span>
+                        {recording.ipfsHash && (
+                          <div className="bg-green-500/20 text-green-400 px-2 py-1 rounded text-xs">
+                            IPFS
+                          </div>
+                        )}
                       </div>
+                      <p className="text-sm text-dark-muted">
+                        {new Date(recording.timestamp).toLocaleString()}
+                      </p>
+                      {recording.location && (
+                        <div className="flex items-center gap-1 mt-1">
+                          <MapPin size={12} className="text-dark-muted" />
+                          <span className="text-xs text-dark-muted">Location saved</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Upload Progress */}
+                  {uploadProgress[recording.recordingId] !== undefined && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-dark-muted">Uploading to IPFS...</span>
+                        <span className="text-primary">{uploadProgress[recording.recordingId]}%</span>
+                      </div>
+                      <div className="w-full bg-dark-border rounded-full h-2">
+                        <div 
+                          className="bg-primary h-2 rounded-full transition-all duration-300"
+                          style={{ width: `${uploadProgress[recording.recordingId]}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action Buttons */}
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => generateSummary(recording)}
+                      className="flex-1 py-2 bg-blue-500/20 text-blue-400 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+                    >
+                      <Share size={16} />
+                      Generate Summary
+                    </button>
+                    
+                    {!recording.ipfsHash && (
+                      <button 
+                        onClick={() => uploadToIPFS(recording)}
+                        disabled={isUploading}
+                        className="flex-1 py-2 bg-green-500/20 text-green-400 rounded-lg text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        <Upload size={16} />
+                        Upload to IPFS
+                      </button>
+                    )}
+                    
+                    {recording.ipfsUrl && (
+                      <button 
+                        onClick={() => window.open(recording.ipfsUrl, '_blank')}
+                        className="flex-1 py-2 bg-primary/20 text-primary rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+                      >
+                        <Share size={16} />
+                        View on IPFS
+                      </button>
                     )}
                   </div>
-                  <button className="px-4 py-2 bg-primary/20 text-primary rounded-lg text-sm">
-                    Share
-                  </button>
                 </div>
               </RightsCard>
             ))}

@@ -2,7 +2,7 @@ import React from 'react'
 import { Shield, MessageSquare, Video, Users, Crown, ChevronRight } from 'lucide-react'
 import { RightsCard } from './RightsCard'
 
-export function Dashboard({ user, onViewChange }) {
+export function Dashboard({ user, onViewChange, onUpgrade }) {
   const quickActions = [
     {
       id: 'rights',
@@ -43,7 +43,10 @@ export function Dashboard({ user, onViewChange }) {
             <p className="text-dark-muted">Current location: {user.currentState}</p>
           </div>
           {user.subscriptionStatus === 'free' && (
-            <button className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-yellow-600 to-yellow-500 text-white rounded-lg font-medium">
+            <button 
+              onClick={onUpgrade}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-yellow-600 to-yellow-500 text-white rounded-lg font-medium hover:from-yellow-700 hover:to-yellow-600 transition-colors"
+            >
               <Crown size={16} />
               Upgrade
             </button>
